@@ -1,0 +1,5 @@
+tnng>=0.3.0
+##stellargraph
+scipy
+numpy
+torch==1.4.0
