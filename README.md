@@ -11,8 +11,7 @@ $ pip install thdbonas
 ## Requirements
 
 * tnng >= 0.3.2
-* tfcg
-* stellargraph
+* pytorch_geometric >= 1.4
 
 ## References
 * https://arxiv.org/abs/1502.05700

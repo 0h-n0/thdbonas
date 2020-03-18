@@ -75,7 +75,6 @@ class DNGO:
                                              self.results,
                                              n_samples,
                                              n_features)
-            print(params)
             mean, var = self._predict(params, self._trials_indices, deep_surrogate_model)
             acq_values = self._calc_acq_value(mean, var, self.results)
             next_sample_index = self._trials_indices[torch.argmax(acq_values)]
