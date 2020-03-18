@@ -1,23 +1,29 @@
+import math
 from enum import Flag, auto
 
-import scipy.stats
 import torch
+import torch.distributions as tdist
 
 from .utils import is_float
 
-def _expected_improvement(mean: torch.tensor, sigma: torch.tensor, min_val: torch.tensor):
-    assert isinstance(mean, np.ndarray), f'instance type error, {type(mean)}'
-    assert isinstance(sigma, np.ndarray), f'instance type error, {type(mean)}'
-    assert is_float(min_val), f'instance type error, {type(mean)}'
+
+def normal_pdf(x, mean, std):
+    return 1 / math.sqrt(2 * math.pi * std**2) * \
+        torch.exp(-(x - mean) ** 2 / (2 * std**2))
+
+def _expected_improvement(mean: torch.Tensor,
+                          sigma: torch.Tensor,
+                          min_val: torch.Tensor):
+    assert isinstance(mean, torch.Tensor), f'instance type error, {type(mean)}'
+    assert isinstance(sigma, torch.Tensor), f'instance type error, {type(mean)}'
     assert len(mean.shape) == 1, f'Invalid shape error, {mean.shape}'
     assert len(sigma.shape) == 1, f'Invalid shape error, {sigma.shape}'
-    assert mean.size == sigma.size, f'Invalid shape error, {sigma.size} != {sigma.size}'
-    assert min_val.size == 1, f'Invalid shape error, {min_val.size}'
+    assert mean.size() == sigma.size(), f'Invalid shape error, {sigma.size()} != {sigma.size()}'
+    assert not min_val.size(), f'Invalid shape error, {min_val.size()}'
 
-    dist = scipy.stats.norm(loc=0.0, scale=1.0)
     gamma = (min_val - mean) / sigma
-    pdf = dist.pdf(x=gamma)
-    cdf = scipy.stats.norm.cdf(x=gamma, loc=0., scale=1.)
+    pdf = normal_pdf(gamma, mean=0., std=1.)
+    cdf = tdist.Normal(loc=0., scale=1.).cdf(gamma)
     ei = (min_val - mean) * cdf + (sigma * pdf)
     return ei
 
