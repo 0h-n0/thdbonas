@@ -23,6 +23,7 @@ class State(Flag):
     Initialized = auto()
     NotInitialized = auto()
 
+
 def is_float(x) -> bool:
     if isinstance(x, float):
         return True
@@ -33,6 +34,7 @@ def is_float(x) -> bool:
     if isinstance(x, np.float64):
         return True
     return False
+
 
 def load_class(path: str):
     ''' load a class from path(: str).

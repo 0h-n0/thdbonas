@@ -1,6 +1,6 @@
 import pytest
 
-from tfdbonas.searcher import Searcher
+from thdbonas.searcher import Searcher
 
 
 def test_searcher():

@@ -3,11 +3,15 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from tfdbonas.utils import load_class, is_float
+from thdbonas.utils import load_class, is_float
 
+
+class Hoge:
+    def __init__(self):
+        pass
 
 def test_load_class():
-    path = 'tfdbonas.deep_surrogate_models:SimpleNetwork'
+    path = 'thdbonas.deep_surrogate_models:SimpleNetwork'
     c = load_class(path)
     c()
 

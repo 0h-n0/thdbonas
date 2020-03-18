@@ -3,10 +3,10 @@ import unittest
 import importlib
 
 import pytest
-import numpy as np
+import torch
 
-from tfdbonas.optimizer import DNGO
-from tfdbonas.trial import TrialGenerator
+from thdbonas.optimizer import DNGO
+from thdbonas.trial import TrialGenerator
 
 
 @pytest.fixture(
@@ -60,7 +60,7 @@ class TestDNGO(unittest.TestCase):
         algo = DNGO(self.trial_generator)
         n_random = 10
         n_bayes = 10
-        path = 'tfdbonas.deep_surrogate_models:SimpleNetwork'
+        path = 'thdbonas.deep_surrogate_models:SimpleNetwork'
         model_kwargs = dict(input_dim=4)
         algo._random_search(TestDNGO.objective, n_random)
         algo._bayes_search(TestDNGO.objective, n_bayes, path, model_kwargs)
@@ -69,10 +69,10 @@ class TestDNGO(unittest.TestCase):
         optimizer = DNGO(self.trial_generator)
         n_random = 10
         n_bayes = 10
-        path = 'tfdbonas.deep_surrogate_models:SimpleNetwork'
-        theta = np.random.rand(2)
-        phi = np.random.rand(10, 10)
-        y_values = np.random.rand(10)
+        path = 'thdbonas.deep_surrogate_models:SimpleNetwork'
+        theta = torch.randn(2)
+        phi = torch.randn(10, 10)
+        y_values = torch.randn(10)
         optimizer._calc_marginal_log_likelihood(theta, phi, y_values, 10, 10)
 
     def test__predict(self):
@@ -80,14 +80,14 @@ class TestDNGO(unittest.TestCase):
         n_random = 10
         n_bayes = 10
         optimizer._deep_surrogate_model_restore_path = f'/tmp/test_model_predict{os.getpid()}.ckpt'
-        path = 'tfdbonas.deep_surrogate_models:SimpleNetwork'
-        theta = np.random.rand(2)
+        path = 'thdbonas.deep_surrogate_models:SimpleNetwork'
+        theta = torch.randn(2)
         searched_trial_indices = [1, 2, 3]
         deep_surrogate_model = self.load_class(path)()
         results = {str(i): i for i in range(3)}
         remained_trial_indices = [4, 5, 6]
-        optimizer.k_inv = np.random.rand(64, 64)
-        optimizer.mat = np.random.rand(64, 64)
+        optimizer.k_inv = torch.randn(64, 64)
+        optimizer.mat = torch.randn(64, 64)
         n_epochs = 1
         trained_bases = optimizer._train_deep_surrogate_model(searched_trial_indices,
                                                               results,
@@ -100,8 +100,8 @@ class TestDNGO(unittest.TestCase):
 
     def test__train_deep_surrogate_model(self):
         optimizer = DNGO(self.trial_generator)
-        path = 'tfdbonas.deep_surrogate_models:SimpleNetwork'
-        theta = np.random.rand(2)
+        path = 'thdbonas.deep_surrogate_models:SimpleNetwork'
+        theta = torch.randn(2)
         searched_trial_indices = [1, 2, 3]
         deep_surrogate_model = self.load_class(path)()
         results = {str(i): i for i in range(3)}
@@ -123,8 +123,8 @@ class TestDNGO(unittest.TestCase):
         n_random = 10
         n_bayes = 10
         optimizer._deep_surrogate_model_restore_path = f'/tmp/test_model_{os.getpid()}.ckpt'
-        path = 'tfdbonas.deep_surrogate_models:SimpleNetwork'
-        theta = np.random.rand(2)
+        path = 'thdbonas.deep_surrogate_models:SimpleNetwork'
+        theta = torch.randn(2)
         searched_trial_indices = [1, 2, 3]
         deep_surrogate_model = self.load_class(path)()
         results = {str(i): i for i in range(3)}
@@ -137,7 +137,7 @@ class TestDNGO(unittest.TestCase):
 
     def test__calc_acq_values_ai(self):
         optimizer = DNGO(self.trial_generator)
-        mean = np.random.rand(10)
-        var = np.random.rand(10)
+        mean = torch.randn(10)
+        var = torch.randn(10)
         results = {1: 1*i for i in range(1)}
         optimizer._calc_acq_value(mean, var, results)

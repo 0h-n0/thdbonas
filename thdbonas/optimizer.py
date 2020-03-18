@@ -2,7 +2,9 @@ import math
 import typing
 import random
 from enum import Flag, auto
+from collections import OrderedDict
 
+import torch
 import numpy as np
 import scipy.optimize
 import scipy.stats
@@ -22,7 +24,7 @@ class DNGO:
         self.trial_generator = trial_generator
         self._state = State.NotInitialized
         self._searched_trial_indices: typing.List[int] = []
-        self.results: typing.Dict[int, float] = {}
+        self.results: typing.Dict[int, float] = OrderedDict()
         self._deep_surrogate_model_restore_path = '/tmp/model.ckpt'
         self.acq_func = AcquisitonFunction(acq_func_type)
 
@@ -73,9 +75,10 @@ class DNGO:
                                              self.results,
                                              n_samples,
                                              n_features)
+            print(params)
             mean, var = self._predict(params, self._trials_indices, deep_surrogate_model)
             acq_values = self._calc_acq_value(mean, var, self.results)
-            next_sample_index = self._trials_indices[np.argmax(acq_values)]
+            next_sample_index = self._trials_indices[torch.argmax(acq_values)]
             self._searched_trial_indices.append(next_sample_index)
             self._trials_indices.remove(next_sample_index)
             self.results[next_sample_index] = objective(self.trial_generator[next_sample_index])
@@ -90,7 +93,8 @@ class DNGO:
         assert len(searched_trial_indices) == len(results), ('invalid inputs, searched_trial_indices[{searched_trial_indices}] '
                                                              'and results[{results}] must be the same length.')
         searched_trials = [self.trial_generator[i] for i in searched_trial_indices]
-        trained_bases = deep_surrogate_model.train(searched_trials, results, n_training_epochs)
+        yvalues = [y for y in results.values()]
+        trained_bases = deep_surrogate_model.learn(searched_trials, yvalues, n_training_epochs)
         return trained_bases
 
     def _predict_deep_surrogate_model(self,
@@ -101,26 +105,26 @@ class DNGO:
         return predicted_bases
 
     def _predict(self, params, remained_trial_indicees, deep_surrogate_model):
-        _, beta = np.exp(params)
+        _, beta = torch.exp(params)
         predicted_bases = self._predict_deep_surrogate_model(remained_trial_indicees,
                                                              deep_surrogate_model)
-        mean = np.matmul(predicted_bases, self.mat)
-        var = np.diag(np.matmul(np.matmul(predicted_bases, self.k_inv), predicted_bases.transpose()) + 1 / beta)
+        mean = torch.matmul(predicted_bases, self.mat)
+        var = torch.diag(torch.matmul(torch.matmul(predicted_bases, self.k_inv), predicted_bases.t()) + 1 / beta)
         return mean, var
 
     def _calc_acq_value(self, mean, var, results):
         # TODO: current version is just for EI.
-        min_val = np.float32(np.min(list(results.values())))
+        min_val = torch.min(torch.FloatTensor(list(results.values())))
         return self.acq_func(mean, var, min_val)
 
     def _update_mll_params(self, bases, searched_trial_indices,
                            results, n_samples, n_features):
 
-        y_values = np.array([results[i] for i in searched_trial_indices])
+        y_values = torch.FloatTensor([results[i] for i in searched_trial_indices])
         params = scipy.optimize.fmin(self._calc_marginal_log_likelihood,
-                                     np.random.rand(2),
+                                     torch.randn(2),
                                      args=(bases, y_values, n_samples, n_features))
-        return params
+        return torch.Tensor(params)
 
     def _calc_marginal_log_likelihood(self,
                                       theta,
@@ -129,27 +133,28 @@ class DNGO:
                                       n_samples,
                                       n_features):
         # TODO: input type check
-        assert theta.size == 2, f"invalid input: theta => {theta}"
+        theta = torch.Tensor(theta)
+        assert theta.size()[0] == 2, f"invalid input: theta => {theta}"
         assert len(theta.shape) == 1, f"invalid input: theta => {theta}"
-        assert y_values.size == n_samples, f"invalid input: y_values.size => {y_values.size}"
-        alpha, beta = np.exp(theta)
+        assert y_values.size()[0] == n_samples, f"invalid input: y_values.size => {y_values.size}"
+        alpha, beta = torch.exp(theta)
 
         # calculate K matrix
-        identity = np.eye(phi.shape[1])
+        identity = torch.eye(phi.shape[1])
         phi_t = phi.transpose(1, 0)
-        k_mat = beta * np.matmul(phi_t, phi) + alpha * identity
+        k_mat = beta * torch.matmul(phi_t, phi) + alpha * identity
 
         # calculate mat
-        k_inv = np.linalg.inv(k_mat)
-        mat = beta * np.matmul(k_inv, phi_t)
-        mat = np.matmul(mat, y_values)
+        k_inv = torch.inverse(k_mat)
+        mat = beta * torch.matmul(k_inv, phi_t)
+        mat = torch.matmul(mat, y_values)
 
-        self.mat = np.float32(mat)
-        self.k_inv = np.float32(k_inv)
+        self.mat = mat.float() #np.float32(mat)
+        self.k_inv = k_inv.float() #np.float32(k_inv)
         mll = n_features / 2. * np.log(alpha)
         mll += n_samples / 2. * np.log(beta)
         mll -= n_samples / 2. * np.log(2 * math.pi)
-        mll -= beta / 2. * np.linalg.norm(y_values - np.matmul(phi, mat))
+        mll -= beta / 2. * torch.norm(y_values - torch.matmul(phi, mat))
         mll -= alpha / 2. * mat.dot(mat)
-        mll -= 0.5 * np.log(np.linalg.det(k_mat))
+        mll -= 0.5 * torch.log(torch.det(k_mat))
         return -mll

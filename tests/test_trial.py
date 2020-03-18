@@ -1,4 +1,4 @@
-from tfdbonas.trial import Trial, TrialGenerator
+from thdbonas.trial import Trial, TrialGenerator
 
 import pytest
 
