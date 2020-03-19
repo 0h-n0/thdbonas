@@ -53,14 +53,14 @@ def objectve(trial):
         data, target = data.to(device), target.to(device)
         optimizer.zero_grad()
         output = model(data)
-        loss = F.nll_loss(pred, target)
+        loss = F.nll_loss(output, target)
         loss.backward()
         optimizer.step()
         pred = output.argmax(dim=1, keepdim=True)
         total_loss += loss.detach().cpu().item()
         correct += pred.eq(target.view_as(pred)).sum().item()
-
     acc = 100. * correct / len(train_loader)
+    print(acc)
     return acc
 
 if __name__ == '__main__':
