@@ -107,8 +107,10 @@ class DNGO:
         _, beta = torch.exp(params)
         predicted_bases = self._predict_deep_surrogate_model(remained_trial_indicees,
                                                              deep_surrogate_model)
-        mean = torch.matmul(predicted_bases, self.mat)
-        var = torch.diag(torch.matmul(torch.matmul(predicted_bases, self.k_inv), predicted_bases.t()) + 1 / beta)
+        mat = torch.from_numpy(self.mat)
+        k_inv = torch.from_numpy(self.k_inv)
+        mean = torch.matmul(predicted_bases, mat)
+        var = torch.diag(torch.matmul(torch.matmul(predicted_bases, k_inv), predicted_bases.t()) + 1 / beta)
         return mean, var
 
     def _calc_acq_value(self, mean, var, results):
@@ -119,7 +121,8 @@ class DNGO:
     def _update_mll_params(self, bases, searched_trial_indices,
                            results, n_samples, n_features):
 
-        y_values = torch.FloatTensor([results[i] for i in searched_trial_indices])
+        y_values = np.array([results[i] for i in searched_trial_indices])
+        bases = bases.numpy()
         params = scipy.optimize.fmin(self._calc_marginal_log_likelihood,
                                      torch.randn(2),
                                      args=(bases, y_values, n_samples, n_features))
@@ -132,28 +135,27 @@ class DNGO:
                                       n_samples,
                                       n_features):
         # TODO: input type check
-        theta = torch.Tensor(theta)
-        assert theta.size()[0] == 2, f"invalid input: theta => {theta}"
+        assert theta.size == 2, f"invalid input: theta => {theta}"
         assert len(theta.shape) == 1, f"invalid input: theta => {theta}"
-        assert y_values.size()[0] == n_samples, f"invalid input: y_values.size => {y_values.size}"
-        alpha, beta = torch.exp(theta)
+        assert y_values.size == n_samples, f"invalid input: y_values.size => {y_values.size}"
+        alpha, beta = np.exp(theta)
 
         # calculate K matrix
-        identity = torch.eye(phi.shape[1])
+        identity = np.eye(phi.shape[1])
         phi_t = phi.transpose(1, 0)
-        k_mat = beta * torch.matmul(phi_t, phi) + alpha * identity
+        k_mat = beta * np.matmul(phi_t, phi) + alpha * identity
 
         # calculate mat
-        k_inv = torch.inverse(k_mat)
-        mat = beta * torch.matmul(k_inv, phi_t)
-        mat = torch.matmul(mat, y_values)
+        k_inv = np.linalg.pinv(k_mat)
+        mat = beta * np.matmul(k_inv, phi_t)
+        mat = np.matmul(mat, y_values)
 
-        self.mat = mat.float() #np.float32(mat)
-        self.k_inv = k_inv.float() #np.float32(k_inv)
+        self.mat = np.float32(mat)
+        self.k_inv = np.float32(k_inv)
         mll = n_features / 2. * np.log(alpha)
         mll += n_samples / 2. * np.log(beta)
         mll -= n_samples / 2. * np.log(2 * math.pi)
-        mll -= beta / 2. * torch.norm(y_values - torch.matmul(phi, mat))
+        mll -= beta / 2. * np.linalg.norm(y_values - np.matmul(phi, mat))
         mll -= alpha / 2. * mat.dot(mat)
-        mll -= 0.5 * torch.log(torch.det(k_mat))
+        mll -= 0.5 * np.log(np.linalg.det(k_mat))
         return -mll
