@@ -11,7 +11,7 @@ import scipy.stats
 
 from .trial import Trial, TrialGenerator
 from .utils import State, load_class
-from .acquistion_functions import AcquisitonFunction, AcquisitonFunctionType
+from .acquistion_functions import AcquisitionFunction, AcquisitionFunctionType
 
 
 class OptimizerType(Flag):
@@ -19,14 +19,14 @@ class OptimizerType(Flag):
 
 
 class DNGO:
-    def __init__(self, trial_generator, acq_func_type=AcquisitonFunctionType.EI):
+    def __init__(self, trial_generator, acq_func_type=AcquisitionFunctionType.EI):
         self._trials_indices = list(range(len(trial_generator)))
         self.trial_generator = trial_generator
         self._state = State.NotInitialized
         self._searched_trial_indices: typing.List[int] = []
         self.results: typing.Dict[int, float] = OrderedDict()
         self._deep_surrogate_model_restore_path = '/tmp/model.ckpt'
-        self.acq_func = AcquisitonFunction(acq_func_type)
+        self.acq_func = AcquisitionFunction(acq_func_type)
 
     def run(self, objective: typing.Callable[[Trial], float],
             n_trials: int, **kwargs):

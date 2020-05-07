@@ -59,9 +59,10 @@ def objectve(trial):
         pred = output.argmax(dim=1, keepdim=True)
         total_loss += loss.detach().cpu().item()
         correct += pred.eq(target.view_as(pred)).sum().item()
-    acc = 100. * correct / len(train_loader)
+    acc = 100. * correct / (len(train_loader) * batch_size)
     print(acc)
     return acc
+
 
 if __name__ == '__main__':
     m = MultiHeadLinkedListLayer()

@@ -17,7 +17,7 @@ if __name__ == '__main__':
         input_dim=2, # coresponding to the number of register_trial
         n_train_epochs=200,
     )
-    n_trials = 30
+    n_trials = 1000
     _ = searcher.search(objectve,
                         n_trials=n_trials,
                         deep_surrogate_model='thdbonas.deep_surrogate_models:SimpleNetwork',

@@ -1,6 +1,6 @@
 from thdbonas.acquistion_functions import (_expected_improvement,
-                                           AcquisitonFunction,
-                                           AcquisitonFunctionType)
+                                           AcquisitionFunction,
+                                           AcquisitionFunctionType)
 import torch
 import numpy as np
 import pytest
@@ -29,11 +29,11 @@ def test__expected_improvement_invalid_type():
     eis = _expected_improvement(mean, sigma, min_val)
 
 @pytest.mark.xfail
-def test__AcquisitonFunctionType():
-    assert AcquisitonFunctionType.EI == 1
+def test__AcquisitionFunctionType():
+    assert AcquisitionFunctionType.EI == 1
 
-def test__AcquisitonFunction():
-    f = AcquisitonFunction(AcquisitonFunctionType.EI)
+def test__AcquisitionFunction():
+    f = AcquisitionFunction(AcquisitionFunctionType.EI)
     mean = torch.arange(0.1, 1, 0.1)
     sigma = torch.arange(0.1, 1, 0.1)
     min_val = torch.tensor(0.1).float()
