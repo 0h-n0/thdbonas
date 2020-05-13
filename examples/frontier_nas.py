@@ -3,6 +3,7 @@ import time
 import copy
 from collections import OrderedDict
 
+import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -12,7 +13,6 @@ import numpy as np
 import torchex.nn as exnn
 import networkx as nx
 from frontier_graph import NetworkxInterface
-
 
 from inferno.extensions.layers.reshape import Concatenate
 from inferno.extensions.containers import Graph
@@ -259,10 +259,19 @@ if __name__ == "__main__":
     g.add_edge(6, 8)
     g.add_edge(7, 8)
     g.add_edge(8, 9)
+    pos = nx.spring_layout(g)
+    print(pos)
+    nx.draw(g, pos)
+
+    print(g.graph)
+    plt.show()
+    ##
     ns = NetworkxInterface(g)
     graphs = ns.sample(starts, ends, 100)
     x = torch.rand(128, 1, 14, 28)
     ng = NetworkGeneratar(g, starts, ends, 100, dryrun_args=(x, x))
+    print(len(ng))
+    a
     #print(list(ng))
     models = []
     total_num = 10
