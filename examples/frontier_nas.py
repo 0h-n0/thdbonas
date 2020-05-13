@@ -1,16 +1,23 @@
 #!/usr/bin/env python
+import time
 import copy
 from collections import OrderedDict
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
+import torch.optim as optim
+from torchvision import datasets, transforms
 import numpy as np
 import torchex.nn as exnn
 import networkx as nx
 from frontier_graph import NetworkxInterface
 
+
 from inferno.extensions.layers.reshape import Concatenate
 from inferno.extensions.containers import Graph
+
+from thdbonas import Searcher, Trial
 
 
 def conv2d(out_channels, kernel_size, stride):
@@ -191,6 +198,51 @@ class NetworkGeneratar:
         return self._len
 
 
+def objectve(trial):
+    model, _, _ = trial.graph
+    use_cuda = True
+
+    device = torch.device("cuda" if use_cuda else "cpu")
+    print(device)
+    model = model.to(device)
+    lr = 0.01
+    batch_size = 128
+
+    kwargs = {'num_workers': 1, 'pin_memory': True} if use_cuda else {}
+    train_loader = torch.utils.data.DataLoader(
+        datasets.MNIST('../data', train=True, download=True,
+                       transform=transforms.Compose([
+                           transforms.ToTensor(),
+                           transforms.Normalize((0.1307,), (0.3081,))
+                       ])),
+        batch_size=batch_size, shuffle=True, **kwargs)
+
+    optimizer = optim.Adadelta(model.parameters(), lr=lr)
+    model.train()
+    total_loss = 0
+    correct = 0
+    s = time.time()
+    for batch_idx, (data, target) in enumerate(train_loader):
+        print(batch_idx)
+        data, target = data.to(device), target.to(device)
+        d1, d2 = torch.split(data, 14, dim=2)
+        print(batch_idx, batch_idx)
+        optimizer.zero_grad()
+        output = model(d1, d2)
+        loss = F.nll_loss(output, target)
+        loss.backward()
+        optimizer.step()
+        pred = output.argmax(dim=1, keepdim=True)
+        total_loss += loss.detach().cpu().item()
+        correct += pred.eq(target.view_as(pred)).sum().item()
+        if batch_idx > 100:
+            break
+    print(f"time = {time.time() - s}")
+    acc = 100. * correct / ((batch_idx + 1) * batch_size)
+    print(acc)
+    return acc
+
+
 if __name__ == "__main__":
     g = nx.DiGraph()
     starts = [1, 2]
@@ -209,14 +261,31 @@ if __name__ == "__main__":
     g.add_edge(8, 9)
     ns = NetworkxInterface(g)
     graphs = ns.sample(starts, ends, 100)
-    x = torch.rand(1, 3, 28, 28)
+    x = torch.rand(128, 1, 14, 28)
     ng = NetworkGeneratar(g, starts, ends, 100, dryrun_args=(x, x))
-    print("Start")
-    print(ng[100])
     #print(list(ng))
-    print("End")
-    for n in ng:
+    models = []
+    total_num = 10
+    for i, n in enumerate(ng):
         module = n[0]
         edges = n[1]
         node_features = n[2]
-        print(module)
+        models.append((module, edges, node_features))
+        if i > total_num:
+            print("break")
+            break
+
+    num_node_features = node_features.shape[1]
+    searcher = Searcher()
+    searcher.register_trial('graph', models)
+    n_trials = 30
+
+    model_kwargs = dict(
+        input_dim=num_node_features,
+        n_train_epochs=400,
+    )
+    _ = searcher.search(objectve,
+                        n_trials=n_trials,
+                        deep_surrogate_model=f'thdbonas.deep_surrogate_models:GCNSurrogateModel',
+                        n_random_trials=10,
+                        model_kwargs=model_kwargs)

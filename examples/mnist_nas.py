@@ -10,7 +10,6 @@ import torch.nn.functional as F
 import torch.optim as optim
 from torchvision import datasets, transforms
 
-from tnng import Generator, MultiHeadLinkedListLayer
 from thdbonas import Searcher, Trial
 
 
