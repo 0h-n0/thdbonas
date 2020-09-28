@@ -38,6 +38,7 @@ class Searcher:
         max_value_idx = max(self.result, key=lambda k: self.result[k])
         self.best_trial = self.trial_generator[max_value_idx]
         self.best_value = self.result[max_value_idx]
+        self.max_value_idx = max_value_idx
         return self
 
     def __len__(self):
