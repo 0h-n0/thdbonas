@@ -30,14 +30,18 @@ def conv2d(out_channels, kernel_size, stride):
 
 
 class FlattenLinear(nn.Module):
-    def __init__(self, out_channels):
+    def __init__(self, out_channels, activation='relu'):
         super(FlattenLinear, self).__init__()
         self.out_channels = out_channels
         self.linear = exnn.Linear(self.out_channels)
         self.flatten = exnn.Flatten()
-    
+        if activation == 'relu':
+            self.activation = nn.ReLU()
+        else:
+            self.activation = nn.Identity()
+            
     def forward(self, x):
-        return F.relu(self.linear(self.flatten(x)))
+        return self.activation(self.linear(self.flatten(x)))
 
 class Concat(nn.Module):
     def __init__(self):
@@ -86,12 +90,12 @@ class ModuleGen:
         elif module_name == 'identity':
             return exnn.Flatten(), vec
 
-    def get_linear(self, out_channels):
+    def get_linear(self, out_channels, activation='relu'):
         _layer_dict = copy.deepcopy(self.layer_dict)
         _layer_dict['linear'] = 1
         _layer_dict['out_channels'] = out_channels
         vec = list(_layer_dict.values())
-        return FlattenLinear(out_channels), vec
+        return FlattenLinear(out_channels, activation), vec
 
     def get_identity_vec(self):
         _layer_dict = copy.deepcopy(self.layer_dict)
@@ -182,7 +186,7 @@ class NetworkGeneratar:
                     raise RuntimeError("can't concatinate FlattenLinear and Conv2d")
                 module.add_node(f'{key}', mod, previous=[str(p) for p in previous], vec=vec)
 
-        mod, vec = self.modulegen.get_linear(10)
+        mod, vec = self.modulegen.get_linear(10, None)
         module.add_node(f'{int(key) + 1}', mod, vec=vec, previous=[f'{key}'])
         vec = self.modulegen.get_identity_vec()
         module.add_output_node(f'{int(key) + 2}', f'{int(key) + 1}', vec=vec)
@@ -373,8 +377,9 @@ def objectve(trial):
                        ])),
         batch_size=batch_size, shuffle=True, **kwargs)
 
-    optimizer = optim.Adadelta(model.parameters(), lr=lr)
+    optimizer = optim.Adam(model.parameters(), lr=lr)
     model.train()
+    print('start training')
     total_loss = 0
     correct = 0
     s = time.time()
@@ -383,13 +388,15 @@ def objectve(trial):
         d1, d2 = torch.split(data, 14, dim=2)
         optimizer.zero_grad()
         output = model(d1, d2)
+        output = F.log_softmax(output, dim=1)
         loss = F.nll_loss(output, target)
         loss.backward()
         optimizer.step()
+        output = F.softmax(output, dim=1)
         pred = output.argmax(dim=1, keepdim=True)
         total_loss += loss.detach().cpu().item()
         correct += pred.eq(target.view_as(pred)).sum().item()
-        if batch_idx > 30:
+        if batch_idx > 40:
             break
     print(f"time = {time.time() - s}")
     acc = 100. * correct / ((batch_idx + 1) * batch_size)
@@ -486,7 +493,7 @@ if __name__ == "__main__":
     g.add_edge(6, 8)
     g.add_edge(7, 8)
     g.add_edge(8, 9)    
-    sample_size = 100
+    sample_size = 200
     ns = NetworkxInterface(g)
     graphs = ns.sample(starts, ends, 100)
     edges = list(g.edges())
@@ -495,19 +502,15 @@ if __name__ == "__main__":
     ng = NetworkGeneratar(g, starts, ends, 100, dryrun_args=(x, x))
     print(len(ng))
     models = []
-    total_num = 10
-    #draw_module(ng[98][0])
-    # ng = ng.elongate(ng[0][0])
-    # for i in range(100):
-    #     print(ng[i])
-    ##
+    
     num_node_features = 4
+    best_acc = 0
     for i in range(10):
         searcher = Searcher()
         print('size of ng', len(ng))
         samples = np.random.randint(0, len(ng), size=sample_size)        
         searcher.register_trial('graph', [ng[i] for i in samples])
-        n_trials = 40
+        n_trials = 100
         n_random_trials = 10
         model_kwargs = dict(
             input_dim=num_node_features,
@@ -519,5 +522,10 @@ if __name__ == "__main__":
                                  n_random_trials=n_random_trials,
                                  model_kwargs=model_kwargs)
         print(f'{i} trial', result.max_value_idx, result.best_trial, result.best_value)
+        if result.best_value > best_acc:
+            best_acc = result.best_value
+        else:
+            print(result.best_trial)
+            break
         ng = ng.elongate(ng[result.max_value_idx][0])
 
