@@ -1,5 +1,4 @@
 scipy
 numpy
-setuptools_rust
 networkx
 git+https://github.com/0h-n0/frontier_graph.git
