@@ -2,6 +2,7 @@
 import time
 import copy
 from collections import OrderedDict
+import warnings
 
 import matplotlib.pyplot as plt
 import torch
@@ -18,6 +19,10 @@ from inferno.extensions.layers.reshape import Concatenate
 from inferno.extensions.containers import Graph
 
 from thdbonas import Searcher, Trial
+
+from blocks import BlockGenerator
+
+np.random.seed(0)
 
 
 def conv2d(out_channels, kernel_size, stride):
@@ -122,8 +127,10 @@ class ModuleGen:
 
 
 class NetworkGeneratar:
-    def __init__(self, graph, starts, ends, max_samples, dryrun_args):
-        self.graph = graph
+    def __init__(self, graph_generator, starts, ends, max_samples, dryrun_args):
+        self.graph_generator = graph_generator
+        self.graph_generator.draw()
+        self.graph = graph_generator.graph
         self.starts = starts
         self.ends = ends
         self.dryrun_args = dryrun_args
@@ -131,7 +138,8 @@ class NetworkGeneratar:
         #self.modulegen.register('conv2d', out_channels=32, kernel_size=1, stride=1)
         self.modulegen.register('linear', out_channels=64)
         self.modulegen.register('identity')
-        self.interface = NetworkxInterface(g)
+        self.interface = NetworkxInterface(self.graph)
+        self.max_samples = max_samples
         self.subgraph = self.get_subgraph(starts, ends, max_samples)
         self.n_subgraph = len(self.subgraph)
         self._len = None
@@ -141,11 +149,11 @@ class NetworkGeneratar:
 
     def _construct_module(self, edge_list, _idx):
         module = Graph()
-        # print(self.graph)
         for i in self.starts:
             vec = self.modulegen.get_identity_vec()
             module.add_input_node(f'{i}', vec=vec)
         node_dict = {}
+
         for (src, dst) in [list(self.graph.edges())[i-1] for i in edge_list]:
             src = int(src)
             dst = int(dst)
@@ -153,19 +161,15 @@ class NetworkGeneratar:
                 node_dict[dst] = [src]
             else:
                 node_dict[dst].append(src)
-        # print('-'*100)
-        # print(self.graph.edges())
-        # print([list(self.graph.edges())[i-1] for i in edge_list])
-        # print(edge_list)
-        # print(node_dict)
+        print('self.graph.edges()', self.graph.edges())
+        print('self.graph.nodes()', self.graph.nodes())                        
+        print('node_dict', node_dict)
         for key, previous in sorted(node_dict.items(), key=lambda x: x[0]):
             layer_idx = _idx % len(self.modulegen)
             _idx //= len(self.modulegen)
             layer_names = [m._get_name() for m in module.modules()][1:] # skip 'Graph' module
             node_names = list(module.graph.nodes)
-            # print('node_names', node_names)
-            # print('key', key)
-            # print('previous', previous)            
+            print('node_names', node_names)
             if len(previous) == 1:
                 mod, vec = self.modulegen[layer_idx]
                 if mod._get_name() == 'Conv2d':
@@ -173,14 +177,11 @@ class NetworkGeneratar:
                     parents_module_names = [layer_names[i] for i in parents_indexes]
                     if 'FlattenLinear' in parents_module_names:
                         raise RuntimeError("can't append Conv2d after FlattenLinear.")
-                # print(f'key => {key}', mod, [str(p) for p in previous], vec)
-                # print(module.graph.nodes())
-                # print(module.graph.edges())                
                 module.add_node(f'{key}', mod, previous=[str(p) for p in previous], vec=vec)
             else:
-                # print(key, previous)
                 mod, vec = self.modulegen.get_cat()
                 parents_indexes = [node_names.index(str(p)) for p in previous]
+                print('parents_indexes', previous)                                
                 parents_module_names = [layer_names[i] for i in parents_indexes]
                 if 'FlattenLinear' in parents_module_names and 'Conv2d' in parents_module_names:
                     raise RuntimeError("can't concatinate FlattenLinear and Conv2d")
@@ -202,127 +203,47 @@ class NetworkGeneratar:
         self.counter = 0
         return self
 
-    def elongate(self, template_graph_module):
-        template = template_graph_module.graph
-        second_nodes = np.array(self.starts) + len(self.starts)
-        dumy_graph, dumy_graph_edge_index_list = self._create_dumy_graph_for_elongation()
+    def elongate(self, template_graph):
         self._len = None
-        self.graph, edge_relation_with_subgraph, template_edges = self._update_graph(template, dumy_graph)
-        self.subgraph = self.update_subgraph(template,
-                                             dumy_graph,
-                                             dumy_graph_edge_index_list,                                             
-                                             self.graph,
-                                             edge_relation_with_subgraph,
-                                             template_edges)
+        template_graph = self.edge_index_to_graph(template_graph, sorted(self.graph.edges()))
+        print('template_graph', template_graph)
+        original_graph = self.graph_generator.to_original_graph(template_graph)
+        print('elongate', original_graph.edges())
+        self.graph_generator = self.graph_generator.elongate(original_graph)
+        print('self.graph_generator.graph.edges()', self.graph_generator.graph.edges())
+        self.graph_generator.draw(filename='elongated_graph.png')
+        self.graph = self.graph_generator.renamed_graph()
+        print('self.graph.edges()', self.graph.edges())
+        self.interface = NetworkxInterface(self.graph)
+        
+        _end_nodes = list(sorted(self.graph.nodes()))[len(self.graph.nodes()) - self.graph_generator.n_outputs:]
+        print('start node', self.graph_generator.start_nodes)
+        print('end node', _end_nodes)
+        self.subgraph = self.get_subgraph(self.graph_generator.start_nodes,
+                                          _end_nodes,
+                                          self.max_samples)
         self.n_subgraph = len(self.subgraph)
+        # ng = NetworkGeneratar(self.graph_generator,
+        #                       self.graph_generator.start_nodes,
+        #                       self.graph_generator.end_nodes,
+        #                       self.max_samples,
+        #                       dryrun_args=self.dryrun_args)
         return self
 
-    def update_subgraph(self, template, dumy_graph, subgraph_edge_index_lists, graph, relation_subgraph_to_original, template_edges):
-        relation_original_to_subgraph = {k: v for (k, v) in relation_subgraph_to_original.items()}
-        subgraph_edges = list(dumy_graph.edges())
-        edges_to_edge_index = {e: idx + 1 for idx, e in enumerate(template.edges())}
-        _base_edge_index = [edges_to_edge_index[e] for e in template_edges]
+    def draw(self, idx, filename='test.png'):
+        edge_index_list = self.subgraph[idx]
+        graph = self.edge_index_to_graph(edge_index_list, sorted(self.graph.edges()))
+        self.graph_generator.draw(graph, filename)
 
-        subgraph = []
-        # print(relation_subgraph_to_original)
-        for edge_index_list in subgraph_edge_index_lists:
-            edge_indices = []
-            for e in edge_index_list:
-                if subgraph_edges[e-1] in relation_subgraph_to_original.keys():
-                    sub_e = relation_subgraph_to_original[subgraph_edges[e-1]]
-                    # print(sub_e)
-                    edge_indices.append(edges_to_edge_index[sub_e])
-            edge_index = _base_edge_index + edge_indices
-            subgraph.append(edge_index)
-        return subgraph
-    
-    def _update_graph(self, template_graph, graph):
-        removed_nodes = list(template_graph.nodes)[-3:]
-        remove_nodes_list = []
-        max_elongation_nodes = 100
-        for n in removed_nodes:
-            template_graph.remove_node(n)
-
-        template_edges = list(template_graph.edges())
-        last_node = list(template_graph.nodes)[-1]
-        new_edges = []
-        
-        new_nodes = [f'{i + int(last_node)}' for i in range(1, 4)]
-
-        ## add new nodes and edges        
-        for n in new_nodes:
-            template_graph.add_edge(last_node, n)
-
-        edge_relation_between_subgraph_and_original = {
-            (3, 4): (last_node, new_nodes[0]),
-            (3, 5): (last_node, new_nodes[1]),
-            (3, 6): (last_node, new_nodes[2]),                            
-            }
-            
-        edge_relation_between_subgraph_and_original[(4, 6)] = (new_nodes[0], new_nodes[-1])
-        edge_relation_between_subgraph_and_original[(5, 6)] = (new_nodes[1], new_nodes[-1])        
-        template_graph.add_edge(new_nodes[0], new_nodes[-1])
-        template_graph.add_edge(new_nodes[1], new_nodes[-1])
-        # right
-        for step in range(3, max_elongation_nodes, 3):
-            if f'{int(new_nodes[0]) - step}' in list(template_graph.nodes):
-                template_graph.add_edge(f'{int(new_nodes[0]) - step}', new_nodes[0])
-                edge_relation_between_subgraph_and_original[(2, 4)] = (f'{int(new_nodes[0]) - step}', new_nodes[0])
-                break
-
-        # left
-        for step in range(3, max_elongation_nodes, 3):            
-            if f'{int(new_nodes[-2]) - step}' in list(template_graph.nodes):
-                template_graph.add_edge(f'{int(new_nodes[-2]) - step}', new_nodes[1])
-                edge_relation_between_subgraph_and_original[(2, 5)] = (f'{int(new_nodes[-2]) - step}', new_nodes[1])
-                break
-        template_graph.add_edge(new_nodes[-1], f'{int(new_nodes[-1]) + 1}')
-        return template_graph, edge_relation_between_subgraph_and_original, template_edges
-
-    def _create_dumy_graph_for_elongation(self):
-        _max_graph_samples = 100
+    def edge_index_to_graph(self, edge_index_list, edges):
         g = nx.DiGraph()
-        starts = [1,]
-        ends = [7,]
-        g.add_edge(1, 2)
-        g.add_edge(2, 3)
-        g.add_edge(2, 4)
-        g.add_edge(2, 5)                
-        g.add_edge(3, 4)
-        g.add_edge(3, 5)
-        g.add_edge(3, 6)
-        g.add_edge(4, 6)
-        g.add_edge(5, 6)        
-        g.add_edge(6, 7)
-        ns = NetworkxInterface(g)
-        graphs = ns.sample(starts, ends, _max_graph_samples)
-        edge_list = self.edge_index_to_edge_nodes(graphs[0], g.edges())
-        for idx, edge_index_list in enumerate(graphs):
-            edge_list = self.edge_index_to_edge_nodes(edge_index_list, g.edges())            
-            draw_edge_list(edge_list, f'subgraph{idx:03d}.png')
-        return g, graphs
-
-    def edge_index_to_edge_nodes(self, edge_index_list, edges):
-        return [list(edges)[edge_index-1] for edge_index in edge_index_list]
-
-    def _draw_dumy_graph(self, g, filename):
-        pos_dir = {
-            '1': np.array([0, 0.25]),
-            '2': np.array([0, 0]),
-            '3': np.array([-0.25, -0.25]),
-            '4': np.array([0.25, -0.25]),
-            '5': np.array([0, -0.5]),
-            '6': np.array([-0.25, -0.75]),
-            '7': np.array([0.25, -0.75]),
-            '8': np.array([0, -1]),
-            '9': np.array([0, -1.25]),
-        }
-        pos = nx.spring_layout(g)        
-        for k in pos_dir:
-            pos[int(k)] = pos_dir[k]
-        nx.draw(g, pos)
-        plt.savefig(filename)
-        plt.clf()
+        edges = self.edge_index_to_edges(edge_index_list, edges)
+        for e in edges:
+            g.add_edge(*e)
+        return g
+    
+    def edge_index_to_edges(self, edge_index_list, edges):
+        return [list(edges)[int(edge_index)-1] for edge_index in edge_index_list]
 
     def __next__(self):
         if self.counter <= len(self):
@@ -363,8 +284,8 @@ class NetworkGeneratar:
 def objectve(trial):
     model, _ = trial.graph
     use_cuda = True
-
     device = torch.device("cuda" if use_cuda else "cpu")
+    print(device)
     model = model.to(device)
     lr = 0.01
     batch_size = 128
@@ -379,7 +300,6 @@ def objectve(trial):
 
     optimizer = optim.Adam(model.parameters(), lr=lr)
     model.train()
-    print('start training')
     total_loss = 0
     correct = 0
     s = time.time()
@@ -396,136 +316,63 @@ def objectve(trial):
         pred = output.argmax(dim=1, keepdim=True)
         total_loss += loss.detach().cpu().item()
         correct += pred.eq(target.view_as(pred)).sum().item()
-        if batch_idx > 40:
+        if batch_idx > 10:
             break
-    print(f"time = {time.time() - s}")
     acc = 100. * correct / ((batch_idx + 1) * batch_size)
     print(acc)
     return acc
 
 
-def draw_module(model, filename='test.png'):
-    fig = plt.figure()
-    ax = fig.add_subplot(111)
-    ax.set_xlim([-1, 1])
-    ax.set_ylim([-2, 1])
-    ax.set_aspect('equal')
-    pos_dir = {
-        '1': np.array([-0.25, 0.25]),
-        '2': np.array([0.25, 0.25]),
-        '3': np.array([-0.25, 0]),
-        '4': np.array([0.25, 0]),
-        '5': np.array([0, -0.25]),
-        '6': np.array([-0.25, -0.50]),
-        '7': np.array([0.25, -0.50]),
-        '8': np.array([0, -0.75]),
-        '9': np.array([0, -1.0]),
-        '10': np.array([0, -1.25]),
-        '11': np.array([0, -1.5]),                        
-        }
-    try:
-        g = model.graph
-        print(g.nodes())        
-    except:
-        g = model
-    pos = nx.spring_layout(g)
-    for k in pos_dir:
-        pos[k] = pos_dir[k]
-    pos = {n: pos_dir[str(n)] for n in g.nodes()}
-    print(pos)
-    nx.draw(g, pos, ax)
-    plt.savefig(filename)
-    plt.clf()
-
-    
-def elongation(model):
-    g = model.graph
-    remove_more_than = len(g) - 2
-    remove_list = []
-    for n in g.nodes():
-        if int(n) >= remove_more_than:
-            remove_list.append(n)
-    for n in remove_list:
-        g.remove_node(n)
-    draw_module(g)
-
-def draw_edge_list(edges, filename='subgraph.png'):
-    fig = plt.figure()
-    ax = fig.add_subplot(111)
-    ax.set_xlim([-1, 1])
-    ax.set_ylim([-2, 1])
-    ax.set_aspect('equal')
-    pos_dir = {
-        '1': np.array([0, 0.5]),
-        '2': np.array([0, 0.25]),
-        '3': np.array([0, 0]),        
-        '4': np.array([-0.25, -0.25]),
-        '5': np.array([0.25, -0.25]),
-        '6': np.array([0, -0.50]),
-        '7': np.array([0, -0.75]),
-        }
-    g = nx.DiGraph()    
-    for e in edges:
-        g.add_edge(e[0], e[1])
-    labels = {n: n for n in g.nodes()}        
-    pos = nx.spring_layout(g)
-    for k in pos_dir:
-        pos[k] = pos_dir[k]
-    pos = {n: pos_dir[str(n)] for n in g.nodes()}
-    nx.draw(g, pos, ax=ax, labels=labels)
-    plt.savefig(filename)
-    plt.clf()
-
     
 if __name__ == "__main__":
-    g = nx.DiGraph()
-    starts = [1, 2]
-    ends = [9,]
-    g.add_edge(1, 3)
-    g.add_edge(2, 4)
-    g.add_edge(3, 5)
-    g.add_edge(3, 6)
-    g.add_edge(4, 5)
-    g.add_edge(4, 7)
-    g.add_edge(5, 6)
-    g.add_edge(5, 7)
-    g.add_edge(5, 8)
-    g.add_edge(6, 8)
-    g.add_edge(7, 8)
-    g.add_edge(8, 9)    
-    sample_size = 200
-    ns = NetworkxInterface(g)
-    graphs = ns.sample(starts, ends, 100)
-    edges = list(g.edges())
+    generator = BlockGenerator(2, 1)
+    sample_size = 5
+    ns = NetworkxInterface(generator.graph)
+    graphs = ns.sample(generator.start_nodes, generator.end_nodes, 100)
     x = torch.rand(128, 392)
     # 392 + 392 # for linear layer
-    ng = NetworkGeneratar(g, starts, ends, 100, dryrun_args=(x, x))
-    print(len(ng))
+    ng = NetworkGeneratar(generator, generator.start_nodes, generator.end_nodes, 300, dryrun_args=(x, x))
     models = []
-    
     num_node_features = 4
     best_acc = 0
+
+    # for i in range(ng.n_subgraph):
+    #     ng.draw(i, f'g{i:03}.png')
     for i in range(10):
         searcher = Searcher()
         print('size of ng', len(ng))
+        if len(ng) == 0:
+            ng.graph_generator.draw(filename='size0.png')
         samples = np.random.randint(0, len(ng), size=sample_size)        
         searcher.register_trial('graph', [ng[i] for i in samples])
-        n_trials = 100
-        n_random_trials = 10
+        n_trials = 2
+        n_random_trials = 1
         model_kwargs = dict(
             input_dim=num_node_features,
             n_train_epochs=400,
         )
-        result = searcher.search(objectve,
-                                 n_trials=n_trials,
-                                 deep_surrogate_model=f'thdbonas.deep_surrogate_models:GCNSurrogateModel',
-                                 n_random_trials=n_random_trials,
-                                 model_kwargs=model_kwargs)
-        print(f'{i} trial', result.max_value_idx, result.best_trial, result.best_value)
-        if result.best_value > best_acc:
-            best_acc = result.best_value
-        else:
-            print(result.best_trial)
-            break
-        ng = ng.elongate(ng[result.max_value_idx][0])
+        # result = searcher.search(objectve,
+        #                          n_trials=n_trials,
+        #                          deep_surrogate_model=f'thdbonas.deep_surrogate_models:GCNSurrogateModel',
+        #                          n_random_trials=n_random_trials,
+        #                          model_kwargs=model_kwargs)
+        # print(f'{i} trial', result.max_value_idx, result.best_trial, result.best_value)
+        # if result.best_value > best_acc:
+        #     best_acc = result.best_value
+        # else:
+        #     print(result.best_trial)
+        
+        # print(ng[result.max_value_idx][0].graph)
+        # print('best_graph-{i}.png', ng[result.max_value_idx][0].graph.edges())
+        warnings.warn(f'{ng[100][0].graph.edges()}')
+
+
+        print(ng[100][0].graph)
+        ng.graph_generator.draw(ng[100][0].graph, f'best_graph-{i}.png')
+        
+        # ng = ng.elongate(ng[result.max_value_idx][0].graph)
+        # print('elongated_graph-{i}.png', ng.graph.edges())
+        #ng.graph_generator.draw(ng.graph, f'elongated_graph-{i}.png')
+        # for j in range(ng.n_subgraph):
+        #     ng.draw(j, f'g{i:03}-{j:03}.png')
 
