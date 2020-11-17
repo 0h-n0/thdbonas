@@ -15,19 +15,51 @@ def get_logger(level='DEBUG'):
 
 class BlockGenerator:
     def __init__(self, n_inputs, n_outputs, logger=None):
-        self.n_inputs = n_inputs
-        self.n_outputs = n_outputs
+        self.inv_flag = n_inputs < n_outputs
+        if self.inv_flag:
+            self.n_inputs = n_outputs
+            self.n_outputs = n_inputs
+        else:
+            self.n_inputs = n_inputs
+            self.n_outputs = n_outputs
         if logger is None:
             self.logger = get_logger()
-        self.graph = nx.DiGraph()
+        self._graph = nx.DiGraph()
         self._n_elongation = 1
-        self.graph = self._init(self.graph, n_inputs, n_outputs)
-        _nodes = sorted(self.graph.nodes())
+        self._graph = self._init(self._graph, self.n_inputs, self.n_outputs)
+        _nodes = sorted(self._graph.nodes())
         self._start_nodes = list(_nodes)[:n_inputs]
-        self._end_nodes = list(_nodes)[len(self.graph.nodes()) - n_outputs:]
+        self._end_nodes = list(_nodes)[len(self._graph.nodes()) - n_outputs:]
+        self.logger.debug(f'self._end_nodes = {self._end_nodes}')
+        
+    @property
+    def start_nodes(self):
+        return self._start_nodes            
+        
+    @property
+    def end_nodes(self):
+        return self._end_nodes            
+        
+    @property
+    def graph(self):
+        if self.inv_flag:
+            return self._inverse_graph(self._graph)
+        else:
+            return self._graph
+            
+    def _inverse_graph(self, graph):
+        inv_graph = nx.DiGraph()
+        nodes = [i for i in sorted(graph.nodes())]
+        nodes.reverse()
+        to_inv_nodes_dict = {i: v for i, v in enumerate(nodes)}
+        for e in graph.edges():
+            inv_node0 = to_inv_nodes_dict[e[0]]
+            inv_node1 = to_inv_nodes_dict[e[1]]
+            inv_graph.add_edge(inv_node1, inv_node0)
+        return inv_graph
 
     def _init(self, graph, n_inputs, n_outputs):
-        counter = 1
+        counter = 0
         for i in range(n_inputs):
             graph.add_edge(counter, counter + n_inputs)
             counter += 1
@@ -37,13 +69,13 @@ class BlockGenerator:
     
     def _construct_intermidiate_layers(self, graph, n_inputs):
         self.logger.debug(f'self._n_elongation = {self._n_elongation}')
-        counter = n_inputs + 1 + (self._n_elongation - 1) * (n_inputs)
+        counter = n_inputs + 1 + (self._n_elongation - 1) * (n_inputs) - 1
         if self._n_elongation > 2:            
             counter += (n_inputs - 1) * (self._n_elongation - 2)
         self.logger.debug(f'counter = {counter}')        
         # print('-------->', (self._n_elongation - 2) * (2 * n_inputs - 1))
         # print('counter', counter)
-        # print(self.graph.nodes())
+        # print(self._graph.nodes())
         if self._n_elongation > 1:
             # create direct arrow
             #     1
@@ -61,10 +93,10 @@ class BlockGenerator:
                     counter += 1
                     
         self.logger.debug(f'diamond_base: counter = {counter}')
-        left_side_nodes = [n for n in range(1 + n_inputs,
+        left_side_nodes = [n for n in range(n_inputs,
                                             1 + n_inputs + self._n_elongation * (n_inputs + n_inputs -1),
                                             n_inputs + n_inputs -1)]
-        right_side_nodes = [n for n in range(2 * n_inputs,
+        right_side_nodes = [n for n in range(2 * n_inputs - 1,
                                              2 * n_inputs + self._n_elongation * (n_inputs + n_inputs -1),
                                              n_inputs + n_inputs -1)]
         self.logger.debug(f'left_side_nodes = {left_side_nodes}')
@@ -85,7 +117,7 @@ class BlockGenerator:
                 to_right_arrow = [counter, counter + n_inputs]
                 from_right_arrow = [counter + n_inputs, counter + 2 * n_inputs - 1]
                 bottom_arrow = [counter, counter + 2 * (n_inputs - 1) + 1]
-                
+
                 if not counter in left_side_nodes:
                     graph.add_edge(*to_left_arrow)
                     graph.add_edge(*from_left_arrow)
@@ -97,7 +129,7 @@ class BlockGenerator:
                     graph.add_edge(*from_right_arrow)
                     self.logger.debug(f'to right arrow  , {to_right_arrow[0]:3}, {to_right_arrow[1]:3}')
                     self.logger.debug(f'from right arrow, {from_right_arrow[0]:3}, {from_right_arrow[1]:3}')
-                #graph.add_edge(*bottom_arrow)
+                graph.add_edge(*bottom_arrow)
                 self.logger.debug(f'bottom arrow    , {bottom_arrow[0]:3}, {bottom_arrow[1]:3}')
             counter += 1
         return graph, counter + self.n_inputs - 1
@@ -132,25 +164,32 @@ class BlockGenerator:
     
     def elongate(self, template_graph: nx.Graph=None):
         if template_graph is None:
-            template_graph = self.graph
-            
+            template_graph = self._graph
         self._n_elongation += 1
-        self.graph = self._construct_from_template(template_graph)
-        self._end_nodes = list(sorted(self.graph.nodes()))[len(self.graph.nodes()) - self.n_outputs:]
+        self.logger.debug(f"template_graph.edges: {template_graph.edges}")
+        self.logger.debug(f"self._n_elongation : {self._n_elongation}")        
+        self._graph = self._construct_from_template(template_graph)
+        self._end_nodes = list(sorted(self._graph.nodes()))[len(self._graph.nodes()) - self.n_outputs:]
+        self.logger.debug(f"updated self._end_nodes : {self._end_nodes}")
         return self
 
     def _construct_from_template(self, template_graph):
         n_removed_layer = self.n_inputs - self.n_outputs
+        self.logger.debug(f"n_removed_layer : {n_removed_layer}")        
         n_removed_nodes = 1
         for i in range(n_removed_layer):
             n_removed_nodes += self.n_outputs + i
+        self.logger.debug(f"n_removed_nodes : {n_removed_nodes}")
             
         nodes = list(sorted(template_graph.nodes))
         #self.logger.debug(f'remained_nodes {nodes[:n_remained_nodes]}')        
-        biggest_node = self.n_inputs * 2 + (2 * self.n_inputs - 1) * self._n_elongation
+        biggest_node = self.n_inputs * 2 + (2 * self.n_inputs - 1) * (self._n_elongation - 1)
+        for i in range(self.n_inputs):
+            biggest_node += i
+        biggest_node += 1
+        self.logger.debug(f"biggest_node : {biggest_node}")        
         removed_nodes_list = [i for i in range(biggest_node - n_removed_nodes, biggest_node)]
-        print(removed_nodes_list)
-        self.logger.debug(f'removed_nodes_list {removed_nodes_list}')
+        self.logger.debug(f'removed_nodes_list : {removed_nodes_list}')
         template_graph.remove_nodes_from(removed_nodes_list)
         graph = template_graph
         ## construct graph
@@ -160,7 +199,11 @@ class BlockGenerator:
     
     def draw(self, graph=None, filename='graph.png', string_node=False):
         if graph is None:
-            graph = self.graph
+            self.logger.debug(f'self.inv_flag {self.inv_flag}')
+            if self.inv_flag:
+                graph = self._graph.reverse()
+            else:
+                graph = self._graph
         import matplotlib.pyplot as plt
         fig = plt.figure()
         ax = fig.add_subplot(111)
@@ -177,7 +220,7 @@ class BlockGenerator:
                 pos_dir[str(i)] = (0, 0.1)
             else:
                 pos_dir[i] = (0, 0.1)
-        counter = 1
+        counter = 0
         depth = 0
         ## input layers
         for i in range(n_inputs):
@@ -238,23 +281,15 @@ class BlockGenerator:
                 pos_dir[counter] = (x_pos+i, depth)                
             counter += 1
         return pos_dir
-
-    @property
-    def start_nodes(self):
-        return self._start_nodes
-    
-    @property
-    def end_nodes(self):
-        return self._end_nodes
     
     def renamed_graph(self):
         graph = nx.DiGraph()
         _name_relation_original_to_dummy = {}
-        for idx, n in enumerate(sorted(self.graph.nodes())):
+        for idx, n in enumerate(sorted(self._graph.nodes())):
             new_name = idx + 1
             graph.add_node(new_name)
             _name_relation_original_to_dummy[n] = new_name
-        for idx, e in enumerate(sorted(self.graph.edges())):
+        for idx, e in enumerate(sorted(self._graph.edges())):
             n1 = _name_relation_original_to_dummy[e[0]]
             n2 = _name_relation_original_to_dummy[e[1]]            
             graph.add_edge(n1, n2)
@@ -263,7 +298,7 @@ class BlockGenerator:
     def to_original_graph(self, renamed_graph):
         graph = nx.DiGraph()
         _name_relation_original_to_dummy = {}
-        for idx, n in enumerate(sorted(self.graph.nodes())):
+        for idx, n in enumerate(sorted(self._graph.nodes())):
             new_name = idx + 1
             _name_relation_original_to_dummy[n] = new_name
         _name_relation_dummy_to_original = {i: k for (k, i) in
@@ -276,33 +311,40 @@ class BlockGenerator:
 
     
 if __name__ == '__main__':
-    b = BlockGenerator(3, 1)
-    b.draw(filename=f'graph{0}.png')
-    sample_size = 100
-    interface = NetworkxInterface(b.graph)
-    subgraph = interface.sample(b.start_nodes, b.end_nodes, sample_size)
+
+    for n in range(2, 12):
+        b = BlockGenerator(n, 1)
+        b.draw(filename=f'graph{n}-{0}.png')            
+        for e in range(1, 6):
+            b.elongate()
+            b.draw(filename=f'graph{n}-{e}.png')                        
+    # for i in range(3):
+    #     b.draw(filename=f'graph{i}.png')
+    #     
+    # interface = NetworkxInterface(b.graph)
+    # subgraph = interface.sample(b.start_nodes, b.end_nodes, sample_size)
     #for idx, s in enumerate(subgraph):
-    idx = 000
-    subgraph = interface.edge_indices_to_digraph(subgraph[-2])
-    b.draw(subgraph, filename=f'subgraph{idx:03d}.png')        
-    print(list(subgraph.degree))                
-    b.elongate(subgraph)
-    b.draw(filename=f'elongated_subgraph{idx:03d}.png')
-    idx = 1    
-    graph = b.renamed_graph()
-    interface = NetworkxInterface(graph)
-    subgraph = interface.sample(b.start_nodes, [list(graph.nodes)[-1],], sample_size)
-    subgraph = interface.edge_indices_to_digraph(subgraph[-3])    
-    b.draw(b.to_original_graph(subgraph), filename=f'subgraph{idx:03d}.png')            
-    b.elongate(b.to_original_graph(subgraph))
-    b.draw(filename=f'elongated_subgraph{idx:03d}.png')    
-    idx = 2
-    graph = b.renamed_graph()
-    interface = NetworkxInterface(graph)
-    subgraph = interface.sample(b.start_nodes, [list(graph.nodes)[-1],], sample_size)
-    subgraph = interface.edge_indices_to_digraph(subgraph[-3])    
-    b.draw(b.to_original_graph(subgraph), filename=f'subgraph{idx:03d}.png')            
-    b.elongate(b.to_original_graph(subgraph))
-    b.draw(filename=f'elongated_subgraph{idx:03d}.png')    
+    # idx = 000
+    # subgraph = interface.edge_indices_to_digraph(subgraph[-2])
+    # b.draw(subgraph, filename=f'subgraph{idx:03d}.png')        
+    # print(list(subgraph.degree))                
+    # b.elongate(subgraph)
+    # b.draw(filename=f'elongated_subgraph{idx:03d}.png')
+    # idx = 1    
+    # graph = b.renamed_graph()
+    # interface = NetworkxInterface(graph)
+    # subgraph = interface.sample(b.start_nodes, [list(graph.nodes)[-1],], sample_size)
+    # subgraph = interface.edge_indices_to_digraph(subgraph[-3])    
+    # b.draw(b.to_original_graph(subgraph), filename=f'subgraph{idx:03d}.png')            
+    # b.elongate(b.to_original_graph(subgraph))
+    # b.draw(filename=f'elongated_subgraph{idx:03d}.png')    
+    # idx = 2
+    # graph = b.renamed_graph()
+    # interface = NetworkxInterface(graph)
+    # subgraph = interface.sample(b.start_nodes, [list(graph.nodes)[-1],], sample_size)
+    # subgraph = interface.edge_indices_to_digraph(subgraph[-3])    
+    # b.draw(b.to_original_graph(subgraph), filename=f'subgraph{idx:03d}.png')            
+    # b.elongate(b.to_original_graph(subgraph))
+    # b.draw(filename=f'elongated_subgraph{idx:03d}.png')    
 
     
